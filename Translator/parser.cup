@@ -1,0 +1,212 @@
+/* Simple +/-/* expression language; parser evaluates constant expressions on the fly*/
+/**
+ *  Package and Import Specifications
+ */
+import java_cup.runtime.*;
+import java.io.IOException;
+import java.io.FileWriter;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/** In this code section we will be defining some extra functions
+    to make the compilation, aka translation process more intuitive **/
+
+action code {:
+
+    /* stores the result of parsing in a java file */
+    void outputToFile(String javaCode) {
+        try {
+            /* overwrites the target main java file in the result folder */
+            FileWriter stream = new FileWriter("output/Main.java", false);
+            stream.write(javaCode);
+            stream.close();
+        } catch (IOException error) {
+            /* Unable to store the final java code in the corresponding target java file*/
+            error.printStackTrace();
+        }
+    }
+
+    /* produces the main class, takes the concatenation of function definitions and main
+       function code as an argument*/
+    String produceMainClass(String content) {
+        return "\npublic class Main {\n" + content + "}";
+    }
+
+    String produceMainFunction(String calls) {
+        return "\n\tpublic static void main(String[] args) {\n" + calls + "\t}\n";
+    }
+
+    /* Concats the function definitions and the expressions of the main program*/
+    String produceJavaCode(String definitions, String calls) {
+        String code = produceMainFunction(calls) + definitions;
+        return produceMainClass(code);
+    }
+
+    /* combines the function name, the arguments and the function code
+       to produce the corresponding function definition */
+    String produceDefinition(String func_head, String func_code) {
+
+        /* function head consists of function name, arguments up to the function content */
+        /* initialization bracket */
+        /*we will be extracting the identifiers, first representing function name, others parameters */
+        String pattern = "[a-zA-Z_][a-zA-Z0-9_]*";
+        Pattern r = Pattern.compile(pattern);
+        Matcher m = r.matcher(func_head);
+
+        String arguments = "";
+        String func_name = "";
+        int match = 0;
+
+
+        while(m.find()) {
+            /* first identifier match stands for function name*/
+            if(match == 0) {
+                func_name = m.group();
+            }
+            else if(match == 1) { /* arguments of the definition */
+                arguments += "String " + m.group();
+            }else{
+                arguments += ", String " + m.group();
+            }
+
+            match++;
+        }
+        
+        return "\n\tpublic static String " + func_name + "(" + arguments + ") {\n" + func_code + "\t}\n";
+    }
+
+    String produceArgument(String argument) {
+        return "String " + argument;
+    }
+
+    /* we want each expression outside of brackets to be inlined and on a new line */
+    /* output following the format: \t<expression>\n */
+
+    String returnExpression(String expression) {
+        return "\t\treturn " + expression + ";\n";
+    }
+
+    String printExpression(String expression) {
+        return "\t\tSystem.out.println(" + expression + ");\n";
+    }
+
+    String produceFunctionCall(String func_head, String args) {
+        return func_head + args + ")";
+    }
+
+    /* Adding quotation marks to actual strings*/
+    String produceString(String sentence) {
+        return "\"" + sentence + "\"";
+    }
+
+    /* takes as input the condition and the two alternative values for an if/else statement */
+    /* translates given statement into the given form a ? b : c */
+    String produceIfStatement(String condition, String expr1, String expr2) {
+        return condition + " ? " + expr1 + " : " + expr2 + "";
+    }
+
+    String produceCondition(String expr1, String comp, String expr2) {
+        return "(" + expr2 + ")" + "." + comp + "(" + expr1 + ")";
+    }
+
+    String produceConcatenation(String value, String other_values) {
+        return " + " + value + other_values; 
+    }
+
+    String addBrackets(String expression) {
+        return "(" + expression + ")";
+    }
+
+:}
+
+/**
+ *  Usercode Components
+ */
+parser code {:
+    // Connect this parser to a scanner!
+    Scanner s;
+    Parser(Scanner s){ this.s=s; }
+:}
+
+/* define how to connect to the scanner! */
+scan with {: return s.next_token(); :};
+
+/**
+ *  Symbol Lists
+ */
+
+/* Terminals (tokens returned by the scanner). */
+terminal            IF, ELSE, SUFFIX, PREFIX, CONCAT, RPAREN, RBRACE, COMMA;
+terminal String     STRING_LITERAL, FUNCTION_HEAD, IDENTIFIER, FUNCTION_DEFINITION_HEAD;
+
+/*  Non terminals */
+non terminal           program;
+non terminal String    definitions, exprs, comparison, def_exprs, definition, expr, if_statement, function_call, args, args_tail, condition, value, expr_rest;      // used to store evaluated subexpressions
+
+/**
+ *  Precedence Declarations
+ */
+precedence left IF, ELSE, PREFIX, SUFFIX, FUNCTION_HEAD, CONCAT, FUNCTION_DEFINITION_HEAD, STRING_LITERAL, IDENTIFIER;
+/**
+ *  The Grammar Rules
+ */
+
+
+program ::= definitions:d exprs:e {:
+            /* Concating main function definition with its contents gathered through parsing*/
+            String javaCode = produceJavaCode(d, e);
+            /* Storing the final java code in the corresponding target file*/
+            outputToFile(javaCode);
+            /* Output console printout for debugging */
+            System.out.println(javaCode);         
+            :}
+          ;
+
+definitions ::= definition:df definitions:dfs   {: RESULT = df + dfs; :}
+              |                                 {: RESULT = ""; :}
+              ;
+
+definition ::= FUNCTION_DEFINITION_HEAD:func_head def_exprs:func_code RBRACE   {: RESULT = produceDefinition(func_head, func_code); :}
+             ;
+
+def_exprs ::= expr:expression def_exprs:other_expressions    {: RESULT = returnExpression(expression) + other_expressions; :}
+            |                                                {: RESULT = ""; :}
+            ;
+
+exprs ::= expr:expression exprs:other_expressions   {: RESULT = printExpression(expression) + other_expressions; :}
+        |                                           {: RESULT = ""; :}
+        ;
+
+value ::= if_statement:if_content   {: RESULT = addBrackets(if_content); :}  
+          | IDENTIFIER:variable       {: RESULT = variable; :} 
+          | function_call:function    {: RESULT = function; :} 
+          | STRING_LITERAL:sentence   {: RESULT = produceString(sentence); :} 
+          ;
+
+expr_rest ::= CONCAT value:value expr_rest:rest_values  {: RESULT = produceConcatenation(value, rest_values); :}
+            |                           {: RESULT = ""; :}
+            ;
+
+expr ::= value:value expr_rest:rest_values  {: RESULT = value + rest_values;:}
+       ;
+
+function_call ::= FUNCTION_HEAD:func_head args:arguments RPAREN  {: RESULT = produceFunctionCall(func_head, arguments); :}
+           ;
+
+args ::= expr:string_value args_tail:tail_args     {: RESULT = string_value + tail_args; :}
+       |                                           {: RESULT = ""; :}
+       ;
+
+args_tail ::= COMMA expr:string_value args_tail:tail_args      {: RESULT = ", " + string_value + tail_args; :}
+            |                                                  {: RESULT = ""; :}
+            ;
+
+if_statement ::= IF condition:cond RPAREN expr:expr1 ELSE expr:expr2   {: RESULT = produceIfStatement(cond, expr1, expr2); :}
+               ;
+
+condition ::= expr:expr1 comparison:comp expr:expr2  {: RESULT = produceCondition(expr1, comp, expr2); :}
+            ;
+
+comparison ::= PREFIX   {: RESULT = "startsWith"; :}
+             | SUFFIX   {: RESULT = "endsWith"; :}
+             ;
